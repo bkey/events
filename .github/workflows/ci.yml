@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Run ruff
+        run: |
+          uv run ruff check app tests
+          uv run ruff format --check app tests
+
+      - name: Check cyclomatic complexity
+        run: uv run xenon --max-absolute B --max-modules B --max-average A app
+
+      - name: Run mypy
+        run: uv run mypy app
+
+      - name: Run unit tests
+        run: uv run pytest --tb=short --ignore=tests/integration --cov-report=term-missing
+        env:
+          HMAC_SECRET: ci-test-secret
+          MONGODB_URL: mongodb://localhost:27017
+          ELASTICSEARCH_URL: http://localhost:9200
+          REDIS_URL: redis://localhost:6379/0
+
+  integration-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run integration tests
+        run: |
+          docker compose -f docker-compose.test.yml up \
+            --build \
+            --abort-on-container-exit \
+            --exit-code-from test
