@@ -9,4 +9,4 @@ from redis.asyncio import Redis
 class AppState:
     mongodb_client: AsyncMongoClient[dict[str, object]] | None = field(default=None)
     elasticsearch_client: AsyncElasticsearch | None = field(default=None)
-    redis_client: "Redis[str] | None" = field(default=None)
+    redis_client: Redis | None = field(default=None)

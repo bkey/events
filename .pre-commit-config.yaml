@@ -15,7 +15,8 @@ repos:
         additional_dependencies:
           - celery-types
           - pydantic
-          - types-redis
+          - pydantic-settings
+          - redis>=7.3.0
           - elasticsearch[async]
           - fastapi
           - pymongo

@@ -1,7 +1,7 @@
 services:
   test:
     build: .
-    command: uv run pytest tests/ -m integration -v
+    command: uv run pytest tests/ -v
     environment:
       - MONGODB_URL=mongodb://root:test@mongo:27017/?authSource=admin
       - REDIS_URL=redis://:test@redis:6379/0
