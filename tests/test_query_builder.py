@@ -87,18 +87,23 @@ def test_build_query_no_timestamp_key_when_no_dates() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_stats_pipeline_no_type_starts_with_project() -> None:
+def test_build_stats_pipeline_always_starts_with_timestamp_match() -> None:
     from models.stats import StatsPeriod
 
     pipeline = _build_stats_pipeline(StatsPeriod.DAILY)
-    assert pipeline[0] == {"$project": {"_id": 0, "type": 1, "timestamp": 1}}
+    match = pipeline[0]["$match"]
+    assert "timestamp" in match
+    assert "type" not in match
+    assert pipeline[1] == {"$project": {"_id": 0, "type": 1, "timestamp": 1}}
 
 
-def test_build_stats_pipeline_with_type_starts_with_match() -> None:
+def test_build_stats_pipeline_with_type_includes_type_in_match() -> None:
     from models.stats import StatsPeriod
 
     pipeline = _build_stats_pipeline(StatsPeriod.DAILY, type="pageview")
-    assert pipeline[0] == {"$match": {"type": "pageview"}}
+    match = pipeline[0]["$match"]
+    assert match["type"] == "pageview"
+    assert "timestamp" in match
     assert pipeline[1] == {"$project": {"_id": 0, "type": 1, "timestamp": 1}}
 
 

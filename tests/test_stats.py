@@ -61,16 +61,20 @@ def test_get_stats_type_filter_passes_to_pipeline(
     mock_collection.aggregate.return_value.to_list.return_value = []
     client.get(STATS_URL, params={"period": "daily", "type": "click"})
     pipeline = mock_collection.aggregate.call_args[0][0]
-    assert pipeline[0] == {"$match": {"type": "click"}}
+    match = pipeline[0]["$match"]
+    assert match["type"] == "click"
+    assert "timestamp" in match
 
 
-def test_get_stats_no_type_filter_omits_match_stage(
+def test_get_stats_no_type_filter_omits_type_from_match(
     client: TestClient, mock_collection: MagicMock
 ) -> None:
     mock_collection.aggregate.return_value.to_list.return_value = []
     client.get(STATS_URL, params={"period": "daily"})
     pipeline = mock_collection.aggregate.call_args[0][0]
-    assert pipeline[0] == {"$project": {"_id": 0, "type": 1, "timestamp": 1}}
+    match = pipeline[0]["$match"]
+    assert "type" not in match
+    assert "timestamp" in match
 
 
 def test_get_stats_invalid_period_rejected(client: TestClient) -> None:

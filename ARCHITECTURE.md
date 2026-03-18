@@ -1,4 +1,18 @@
-# Architecture
+
+# Event Ingestion & Query Service — Architecture
+
+## Overview
+
+This service ingests high-volume event data, persists it as the system of record, and exposes APIs for querying, search, and aggregations.
+
+The system is designed to:
+
+* Decouple ingestion from persistence for low-latency writes
+* Provide strong consistency for primary data access
+* Support full-text search via a secondary index
+* Scale horizontally across ingestion and query paths
+
+---
 
 ## System Diagram
 
@@ -34,61 +48,304 @@
                         └─────────────────────────────────────────┘
 ```
 
+---
+
+## Request Lifecycle
+
+### Write Path (`POST /v1/events`)
+
+1. Request is validated synchronously in FastAPI
+2. Event batch is enqueued to Redis (Celery broker)
+3. API returns `202 Accepted`
+4. Celery worker asynchronously:
+
+   * Persists events to MongoDB
+   * Indexes events into Elasticsearch (best-effort)
+
+**Durability guarantee:**
+An event is considered durable only after a successful MongoDB write.
+
+**Delivery semantics:**
+At-least-once processing (duplicates possible, handled via idempotency).
+
+---
+
+### Read Paths
+
+| Endpoint                    | Source of Truth         | Notes                 |
+| --------------------------- | ----------------------- | --------------------- |
+| `/v1/events`                | MongoDB                 | Strongly consistent   |
+| `/v1/events/search`         | Elasticsearch           | Eventually consistent |
+| `/v1/events/stats`          | MongoDB                 | Aggregation pipeline  |
+| `/v1/events/stats/realtime` | Redis (cache) → MongoDB | Cache TTL 10s; covers last 1 hour of data |
+
+---
+
+## Consistency Model
+
+* **MongoDB**
+
+  * Primary system of record
+  * Strong consistency for reads and writes
+
+* **Elasticsearch**
+
+  * Eventually consistent with MongoDB
+  * Indexing occurs asynchronously via Celery
+
+* **Redis cache (`/stats/realtime`)**
+
+  * Time-based consistency (TTL = 10 seconds)
+
+**Important:**
+
+* No cross-system transactional guarantees exist between MongoDB and Elasticsearch
+* Search results may lag behind primary data
+* Cached stats may be stale within the TTL window
+
+---
+
 ## Component Responsibilities
 
-| Component | Responsibility |
-|-----------|----------------|
-| **FastAPI** | Validates incoming events, enforces rate limiting, enqueues work, serves read queries |
-| **Redis** | Celery broker (task queue for ingestion) and read cache (`/stats/realtime`) |
-| **Celery Worker** | Persists event batches to MongoDB and indexes them in Elasticsearch |
-| **MongoDB** | Primary store for all events — source of truth for pagination and stats aggregations |
-| **Elasticsearch** | Search index for full-text queries across event fields |
+| Component         | Responsibility                                                                  |
+| ----------------- | ------------------------------------------------------------------------------- |
+| **FastAPI**       | Request validation, rate limiting, enqueueing ingestion jobs, serving read APIs |
+| **Redis**         | Celery broker (ingestion queue) and cache for realtime stats                    |
+| **Celery Worker** | Asynchronous processing of event batches                                        |
+| **MongoDB**       | Source of truth for all events and aggregations                                 |
+| **Elasticsearch** | Full-text search index                                                          |
+
+---
 
 ## Storage Rationale
 
-**MongoDB** is the source of truth. It handles writes well at volume, supports the `$dateTrunc` aggregation used by `/stats`, and its document model maps naturally to the event schema.
+### MongoDB (Primary Store)
 
-**Elasticsearch** handles search. MongoDB's text search is limited — Elasticsearch provides proper full-text analysis and relevance scoring with no impact on write throughput since indexing is async.
+* Optimized for high write throughput
+* Flexible document schema maps directly to event payloads
+* Supports aggregation pipelines (e.g. `$dateTrunc`) used by `/stats`
+* Serves as the authoritative data source for all non-search queries
+* `$jsonSchema` collection validator enforces required fields and BSON types at write time, rejecting malformed documents before they reach the application
+* Stats aggregations are bounded to a 90-day default lookback window to prevent unbounded collection scans as data grows
 
-**Redis** serves two roles: Celery broker and read cache. As a broker it keeps ingestion non-blocking — the API returns 202 immediately and the worker handles persistence, preventing slow DB writes from affecting client-facing latency. As a cache it stores the `/stats/realtime` aggregation result with a 10-second TTL, avoiding a MongoDB aggregation scan on every poll.
+---
+
+### Elasticsearch (Search Index)
+
+* Provides full-text search, tokenization, and relevance scoring
+* Avoids performance impact on primary write path via async indexing
+* Uses MongoDB `_id` as document ID for idempotent indexing
+* Search supports offset-based pagination (`offset` + `limit`) for navigating large result sets
+* Queries are bounded by a 5s server-side timeout; ES returns partial results rather than blocking indefinitely
+
+---
+
+### Redis
+
+**Broker:**
+
+* Decouples ingestion from persistence
+* Enables non-blocking API writes (low latency)
+
+**Cache:**
+
+* Stores `/stats/realtime` results
+* TTL = 10 seconds to reduce repeated aggregation load
+
+---
 
 ## Failure Modes
 
-**MongoDB unavailable**
-- API startup fails fast — MongoDB is required
-- `process_events` retries up to 3 times with exponential backoff (1, 2, 4s), then rejects the message
-- Rejected messages are written to the `dead_letter_events` MongoDB collection for inspection and replay
+### MongoDB Unavailable
 
-**Elasticsearch unavailable**
-- API starts successfully and all non-search endpoints continue to function
-- `/search` returns 503
-- The Celery worker starts successfully; `process_events` persists to MongoDB and logs a warning, skipping the ES index step
-- Events ingested while ES is down will be missing from search results and must be re-indexed from MongoDB once ES recovers — no automated backfill is currently implemented
+* **Impact:**
 
-**Worker crashes mid-batch**
-- The Celery task is re-queued by the broker (assuming `acks_late=True` or default visibility timeout)
-- MongoDB `insert_many` uses `ordered=False` and ignores duplicate key errors (E11000) so re-delivery is safe
-- Elasticsearch `bulk` uses the MongoDB `_id` as the document ID, making re-indexing idempotent
+  * API fails to start
+  * Worker cannot persist events
 
-**Redis unavailable**
-- `POST /v1/events` will fail — events cannot be enqueued
-- Read endpoints (`GET /events`, `/search`, `/stats`) are unaffected
+* **Behavior:**
 
-## Scaling Considerations
+  * `process_events` retries 3 times with exponential backoff (1s, 2s, 4s)
+  * Failed batches are written to `dead_letter_events`
 
-At 10x event volume, the likely bottlenecks would be:
+* **Recovery:**
 
-1. **Single Celery worker** — add more worker replicas; Celery scales horizontally with no coordination needed
-2. **MongoDB write throughput** — add a write-optimised index strategy; consider sharding on `timestamp` or `user_id` for even distribution
-3. **Elasticsearch indexing lag** — bulk indexing is efficient, but a dedicated indexing queue (separate from the persistence queue) would allow independent scaling and prevent index backpressure from blocking MongoDB writes
-4. **Redis broker** — a single Redis node becomes a bottleneck; move to Redis Cluster or replace with Kafka for higher fan-out
-5. **Pagination at depth** — `skip(N)` scans and discards N documents before returning results; at high volume with large offsets this becomes expensive. Cursor-based (keyset) pagination — `WHERE timestamp < last_seen AND _id < last_id` — eliminates the scan entirely but requires clients to carry an opaque cursor token rather than a page number
-6. **Stats aggregation index hint** — `GET /stats` uses `type_1_timestamp_-1` when a `type` filter is provided (bounded scan) and falls back to `timestamp_-1` when querying across all types. At very high cardinality (millions of distinct event types), even the `timestamp_-1` scan becomes expensive; a background job that materializes hourly counts into a separate collection would be more efficient than scanning raw events per request
-7. **Elasticsearch normalizer cost** — the `lowercase_normalizer` applied to all keyword fields is negligible at current volume, but at very high ingest rates per-field transformations accumulate across the bulk pipeline. Worth benchmarking if indexing throughput becomes a bottleneck before adding further normalizers or token filters
+  * Manual inspection and replay of DLQ required
 
-## What I'd Do Differently
+---
 
-- **ES backfill job** — a periodic task (or triggered job) to re-index any events present in MongoDB but missing from Elasticsearch, to recover from ES outages automatically. Currently events ingested while ES is down are permanently absent from search results.
-- **Separate persistence and indexing queues** — decouple MongoDB writes from ES indexing so an ES slowdown doesn't affect ingestion latency. Right now a slow ES bulk index blocks the worker from acknowledging the task.
-- **DLQ replay endpoint** — the dead-letter collection exists and captures permanently-failed batches, but there's no API to inspect or replay them. A `GET /v1/events/dlq` and `POST /v1/events/dlq/{id}/replay` would close that loop.
-- **Elasticsearch index lifecycle management** — for high-volume production use, time-based index rollover (e.g. one index per day) with ILM policies would keep index sizes manageable and allow old data to be moved to cheaper storage tiers automatically.
+### Elasticsearch Unavailable
+
+* **Impact:**
+
+  * `/v1/events/search` returns `503`
+  * Newly ingested events are not searchable
+
+* **Unaffected:**
+
+  * Event ingestion (MongoDB writes succeed)
+  * `/events`, `/stats`
+
+* **Behavior:**
+
+  * Worker skips indexing and logs warning
+
+* **Recovery:**
+
+  * Manual re-index from MongoDB required
+  * No automated backfill currently implemented
+
+---
+
+### Worker Crash During Processing
+
+* **Behavior:**
+
+  * Celery configured with `acks_late=True`
+  * Task is re-queued if worker crashes mid-processing
+
+* **Idempotency guarantees:**
+
+  * MongoDB `insert_many(ordered=false)` ignores duplicate key errors
+  * Elasticsearch uses `_id` for idempotent indexing
+
+* **Result:**
+
+  * Safe at-least-once processing
+
+---
+
+### Redis Unavailable
+
+* **Impact:**
+
+  * `POST /v1/events` fails (cannot enqueue)
+  * `/stats/realtime` cache unavailable
+
+* **Unaffected:**
+
+  * All MongoDB-backed read endpoints
+
+---
+
+## Scaling Characteristics
+
+### Current Limits (≈10× Volume)
+
+1. **Celery worker throughput**
+2. **MongoDB write capacity**
+3. **Elasticsearch indexing lag**
+4. **Redis broker saturation**
+5. **Deep pagination (`skip(N)`) inefficiency**
+6. **Aggregation scan cost at high cardinality**
+7. **Elasticsearch ingest pipeline overhead**
+
+---
+
+### Scaling Strategies
+
+* **Horizontal worker scaling**
+
+  * Add multiple Celery (or SQS) workers
+
+* **MongoDB scaling**
+
+  * Shard on `timestamp` or `user_id`
+  * Optimize write-heavy indexes
+
+* **Decouple indexing**
+
+  * Separate queue for Elasticsearch indexing
+
+* **Broker scaling**
+
+  * Redis Cluster or Kafka for higher throughput
+
+* **Pagination**
+
+  * Replace offset pagination with cursor-based pagination:
+
+* **Pre-aggregation**
+
+  * Materialize stats (e.g. hourly rollups) into separate collection
+
+* **Elasticsearch optimization**
+
+  * Benchmark ingest pipeline (normalizers, token filters)
+
+---
+
+## Operational Considerations
+
+### Idempotency
+
+* Required due to at-least-once delivery
+* Achieved via:
+
+  * MongoDB unique index on `event_id` — duplicate events are silently skipped
+  * Elasticsearch uses the MongoDB `_id` as its document ID, making re-indexing a no-op overwrite
+
+---
+
+### Observability (Recommended)
+
+* Queue depth (Redis)
+* Task latency (enqueue → completion)
+* MongoDB write latency
+* Elasticsearch indexing lag
+* DLQ size
+
+---
+
+### Backpressure
+
+* Currently implicit via Redis queue growth
+* No explicit rate limiting based on downstream capacity
+
+---
+
+## Known Limitations
+
+* No automatic Elasticsearch backfill
+* Single queue couples persistence and indexing latency
+* DLQ is not externally accessible
+* Offset pagination does not scale for large datasets
+* Aggregations are computed on raw data (no rollups)
+
+---
+
+## What I'd do With More Time
+
+1. **Elasticsearch backfill job**
+
+   * Automatically reconcile missing indexed events
+
+2. **Separate persistence and indexing queues**
+
+   * Prevent ES slowdown from affecting ingestion
+
+3. **DLQ replay endpoint**
+
+   * `dead_letter_events` collection exists and captures failed batches; a `GET /v1/events/dlq` and `POST /v1/events/dlq/{id}/replay` would close the loop
+
+4. **Pre-aggregated stats**
+
+   * Reduce aggregation cost at high volume
+
+5. **Elasticsearch Index Lifecycle Management (scale-dependent)**
+
+   * Time-based index rollover and tiered storage
+
+---
+
+## Summary
+
+This architecture prioritizes:
+
+* Low-latency ingestion via async processing
+* Strong consistency for primary data access
+* Eventual consistency for search
+* Horizontal scalability across ingestion and querying
+
+The primary tradeoff is **consistency vs performance**, with MongoDB as the source of truth and Elasticsearch as a best-effort secondary index.
+

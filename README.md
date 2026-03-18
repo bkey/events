@@ -280,7 +280,7 @@ The events index uses an explicit mapping defined in `app/db/elastic.py` and app
       "type":       { "type": "keyword" },
       "timestamp":  { "type": "date" },
       "user_id":    { "type": "keyword" },
-      "source_url": { "type": "keyword" },
+      "source_url": { "type": "text" },
       "metadata":   { "type": "object", "dynamic": true }
     }
   }
@@ -292,8 +292,11 @@ The events index uses an explicit mapping defined in `app/db/elastic.py` and app
 **`event_id` → `keyword`**
 Stored as a top-level field separate from the ES document `_id`. Returned by `GET /v1/events` and `GET /v1/events/search`, and can be filtered directly in ES queries if needed.
 
-**`type`, `user_id`, `source_url` → `keyword` with `lowercase_normalizer`**
-These fields are used for exact-match filtering and aggregations, not full-text search. `keyword` prevents tokenisation — `"pageview"` is stored and matched as a single term. The `lowercase_normalizer` folds values to lowercase at both index and query time, making searches case-insensitive. Using `text` here would cause unexpected partial matches and make aggregations impossible without a `.keyword` sub-field.
+**`type`, `user_id` → `keyword` with `lowercase_normalizer`**
+Used for exact-match filtering and aggregations, not full-text search. `keyword` prevents tokenization — `"pageview"` is stored and matched as a single term. The `lowercase_normalizer` folds values to lowercase at both index and query time, making searches case-insensitive.
+
+**`source_url` → `text`**
+Mapped as `text` so the standard analyzer tokenizes URLs into terms (e.g. `https://target.example.com/` → `["https", "target", "example", "com"]`). This allows `simple_query_string` to match on domain components naturally. Keyword exact-match is not useful here because stored values include the full URL scheme and path, which users never search for verbatim.
 
 **`timestamp` → `date`**
 Enables range queries (`$gte`/`$lte`) and date histogram aggregations natively. ES parses ISO 8601 strings automatically.

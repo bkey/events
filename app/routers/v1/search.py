@@ -59,7 +59,7 @@ async def _get_es_client(request: Request) -> AsyncElasticsearch:
     responses={
         422: {"description": "Query parameter failed validation"},
         429: {"description": "Rate limit exceeded (30 requests/minute)"},
-        503: {"description": "Elasticsearch is unavailable"},
+        503: {"description": "Elasticsearch is unavailable or timed out"},
     },
 )
 @limiter.limit("30/minute")  # type: ignore[untyped-decorator]
@@ -75,6 +75,9 @@ async def get_event_search(
         ),
     ),
     limit: int = Query(10, ge=1, le=100, description="Maximum items to return"),
+    offset: int = Query(
+        0, ge=0, description="Number of results to skip (for pagination)"
+    ),
     metadata_key: str | None = Query(
         None,
         description=(
@@ -108,6 +111,8 @@ async def get_event_search(
                 }
             },
             size=limit,
+            from_=offset,
+            timeout="5s",
         )
     except TransportError as e:
         raise HTTPException(

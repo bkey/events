@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -40,13 +40,19 @@ def verify_cache(raw: str, secret: str) -> list[Any] | None:
 
 
 def build_stats_pipeline(
-    period: StatsPeriod, type: str | None = None
+    period: StatsPeriod, type: str | None = None, lookback_days: int = 90
 ) -> list[dict[str, Any]]:
-    """Build a MongoDB aggregation pipeline for periodic event counts."""
-    pipeline: list[dict[str, Any]] = []
+    """Build a MongoDB aggregation pipeline for periodic event counts.
+
+    Scans at most `lookback_days` of data (default 90) to keep aggregations
+    bounded as the collection grows.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    match: dict[str, Any] = {"timestamp": {"$gte": since}}
     if type is not None:
-        pipeline.append({"$match": {"type": type}})
-    pipeline += [
+        match["type"] = type
+    return [
+        {"$match": match},
         {"$project": {"_id": 0, "type": 1, "timestamp": 1}},
         {
             "$group": {
@@ -64,7 +70,6 @@ def build_stats_pipeline(
         },
         {"$sort": {"_id.period": -1, "_id.type": 1}},
     ]
-    return pipeline
 
 
 def build_realtime_pipeline(since: datetime) -> list[dict[str, Any]]:

@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, AsyncMongoClient, MongoClient
 from pymongo.errors import PyMongoError
@@ -21,13 +22,43 @@ _INDEXES = [
     IndexModel([("timestamp", DESCENDING)]),
 ]
 
+# Schema validator rejects documents missing required fields or with wrong types.
+# validationAction="error" causes MongoDB to reject the write rather than just log it,
+# catching worker serialization bugs at insert time rather than silently at query time.
+# validationLevel="moderate" only validates new inserts and updates, not existing docs.
+_EVENTS_SCHEMA: dict[str, Any] = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": ["_id", "event_id", "type", "timestamp", "user_id", "source_url"],
+        "properties": {
+            "_id": {"bsonType": "string"},
+            "event_id": {"bsonType": "string"},
+            "type": {"bsonType": "string"},
+            "timestamp": {"bsonType": "date"},
+            "user_id": {"bsonType": "string"},
+            "source_url": {"bsonType": "string"},
+            "metadata": {"bsonType": "object"},
+        },
+    }
+}
+
 
 async def ensure_indexes(client: AsyncMongoClient[dict[str, object]]) -> None:
-    """Create collection indexes if they do not already exist. Idempotent."""
-    collection = client[settings.db_name][settings.events_collection]
+    """Create collection indexes and schema validator if they do not already exist. Idempotent."""
+    db = client[settings.db_name]
+    collection = db[settings.events_collection]
     await collection.create_indexes(_INDEXES)
+    await db.command(
+        "collMod",
+        settings.events_collection,
+        validator=_EVENTS_SCHEMA,
+        validationLevel="moderate",
+        validationAction="error",
+    )
     logger.info(
-        "MongoDB indexes ensured on %s.%s", settings.db_name, settings.events_collection
+        "MongoDB indexes and schema validator ensured on %s.%s",
+        settings.db_name,
+        settings.events_collection,
     )
 
 
