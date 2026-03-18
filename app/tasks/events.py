@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -43,6 +44,21 @@ class EventsTask(celery_app.Task):  # type: ignore[misc]
         return self._es_client
 
 
+def _parse_timestamps(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Convert ISO timestamp strings to datetime objects.
+
+    Celery's JSON serializer converts datetime objects to ISO strings in transit.
+    MongoDB requires native datetime objects for date comparisons and aggregations.
+    """
+    parsed = []
+    for event in events:
+        ts = event.get("timestamp")
+        if isinstance(ts, str):
+            event = {**event, "timestamp": datetime.fromisoformat(ts)}
+        parsed.append(event)
+    return parsed
+
+
 def _persist_to_mongo(task: EventsTask, events: list[dict[str, object]]) -> int:
     """Insert events into MongoDB. Returns the number of documents inserted.
 
@@ -50,6 +66,7 @@ def _persist_to_mongo(task: EventsTask, events: list[dict[str, object]]) -> int:
     up to max_retries, and writes to the DLQ on exhaustion.
     """
     collection = task.mongo_client[settings.db_name][settings.events_collection]
+    events = _parse_timestamps(events)
     try:
         result = collection.insert_many(events, ordered=False)
         return len(result.inserted_ids)

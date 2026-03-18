@@ -18,7 +18,7 @@ class Settings(BaseSettings):  # type: ignore[misc]
 
     # Redis
     redis_url: str
-    realtime_window_seconds: int = 300
+    realtime_window_seconds: int = 3600
     realtime_cache_ttl: int = 10
     realtime_cache_key: str = "stats:realtime"
     stats_cache_ttl: int = 60

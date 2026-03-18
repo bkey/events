@@ -45,12 +45,13 @@ async def get_event_stats(
     collection = request.app.state.mongodb_client[settings.db_name][
         settings.events_collection
     ]
+    hint = {"type": 1, "timestamp": -1} if type is not None else {"timestamp": -1}
     try:
         results = await (
             await collection.aggregate(
                 build_stats_pipeline(period, type),
                 allowDiskUse=True,
-                hint={"type": 1, "timestamp": -1},
+                hint=hint,
             )
         ).to_list(None)
     except PyMongoError as exc:
@@ -64,7 +65,7 @@ async def get_event_stats(
     "/realtime",
     summary="Get Realtime Event Stats",
     description=(
-        f"Returns event counts by type over the last {settings.realtime_window_seconds // 60} minutes. "
+        f"Returns event counts by type over the last {settings.realtime_window_seconds // 3600} hour(s). "
         f"Results are cached for {settings.realtime_cache_ttl}s and served from Redis when available."
     ),
     response_model=list[RealtimeStatsBucket],
@@ -78,7 +79,7 @@ async def get_event_stats_realtime(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> list[RealtimeStatsBucket]:
-    """Return per-type event counts for the last 5 minutes, served from cache when available."""
+    """Return per-type event counts for the last hour, served from cache when available."""
     redis = request.app.state.redis_client
     if redis is not None:
         cached = await redis.get(settings.realtime_cache_key)

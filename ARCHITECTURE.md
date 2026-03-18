@@ -83,7 +83,8 @@ At 10x event volume, the likely bottlenecks would be:
 3. **Elasticsearch indexing lag** — bulk indexing is efficient, but a dedicated indexing queue (separate from the persistence queue) would allow independent scaling and prevent index backpressure from blocking MongoDB writes
 4. **Redis broker** — a single Redis node becomes a bottleneck; move to Redis Cluster or replace with Kafka for higher fan-out
 5. **Pagination at depth** — `skip(N)` scans and discards N documents before returning results; at high volume with large offsets this becomes expensive. Cursor-based (keyset) pagination — `WHERE timestamp < last_seen AND _id < last_id` — eliminates the scan entirely but requires clients to carry an opaque cursor token rather than a page number
-6. **Elasticsearch normalizer cost** — the `lowercase_normalizer` applied to all keyword fields is negligible at current volume, but at very high ingest rates per-field transformations accumulate across the bulk pipeline. Worth benchmarking if indexing throughput becomes a bottleneck before adding further normalizers or token filters
+6. **Stats aggregation index hint** — `GET /stats` uses `type_1_timestamp_-1` when a `type` filter is provided (bounded scan) and falls back to `timestamp_-1` when querying across all types. At very high cardinality (millions of distinct event types), even the `timestamp_-1` scan becomes expensive; a background job that materializes hourly counts into a separate collection would be more efficient than scanning raw events per request
+7. **Elasticsearch normalizer cost** — the `lowercase_normalizer` applied to all keyword fields is negligible at current volume, but at very high ingest rates per-field transformations accumulate across the bulk pipeline. Worth benchmarking if indexing throughput becomes a bottleneck before adding further normalizers or token filters
 
 ## What I'd Do Differently
 

@@ -1,10 +1,11 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from conftest import build_collection_mock, build_mongo_mock
 from pymongo.errors import BulkWriteError, PyMongoError
 import pytest
 
-from tasks.events import process_events
+from tasks.events import _parse_timestamps, process_events
 
 TASK_EVENT = {
     "_id": "test-id-123",
@@ -109,6 +110,31 @@ def test_es_client_not_reinitialized_after_failure() -> None:
         mock_connect.assert_called_once()
 
 
+# --- _parse_timestamps ---
+
+
+def test_parse_timestamps_converts_iso_string_to_datetime() -> None:
+    events = [{"timestamp": "2024-01-01T00:00:00+00:00", "type": "pageview"}]
+    result = _parse_timestamps(events)
+    assert isinstance(result[0]["timestamp"], datetime)
+
+
+def test_parse_timestamps_leaves_datetime_unchanged() -> None:
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    events = [{"timestamp": ts, "type": "pageview"}]
+    result = _parse_timestamps(events)
+    assert result[0]["timestamp"] is ts
+
+
+def test_parse_timestamps_leaves_other_fields_unchanged() -> None:
+    events = [
+        {"timestamp": "2024-01-01T00:00:00+00:00", "type": "pageview", "_id": "abc"}
+    ]
+    result = _parse_timestamps(events)
+    assert result[0]["type"] == "pageview"
+    assert result[0]["_id"] == "abc"
+
+
 # --- process_events ---
 
 
@@ -117,7 +143,11 @@ def test_process_events_inserts_to_mongo(
 ) -> None:
     result = process_events.apply(args=[[TASK_EVENT]])
     assert result.get() == {"inserted": 1}
-    mock_collection.insert_many.assert_called_once_with([TASK_EVENT], ordered=False)
+    inserted = mock_collection.insert_many.call_args[0][0]
+    assert len(inserted) == 1
+    assert isinstance(
+        inserted[0]["timestamp"], datetime
+    )  # string was parsed to datetime
 
 
 def test_process_events_indexes_to_es(
