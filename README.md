@@ -33,7 +33,7 @@ FastAPI (port 8000)
 | `GET` | `/v1/events/` | List events with pagination |
 | `GET` | `/v1/events/search?q=` | Full-text search via Elasticsearch |
 | `GET` | `/v1/events/stats?period=` | Event counts grouped by type and time period; optionally filtered by `?type=` |
-| `GET` | `/v1/events/stats/realtime` | Per-type event counts over the last 5 minutes, served from Redis cache |
+| `GET` | `/v1/events/stats/realtime` | Per-type event counts over the last hour, served from Redis cache |
 
 ### Event schema
 
@@ -82,7 +82,7 @@ Once running, interactive API docs are available at:
 | `ELASTICSEARCH_URL` | Yes | Elasticsearch connection string |
 | `REDIS_URL` | Yes | Redis connection string (Celery broker) |
 | `HMAC_SECRET` | Yes | Secret key used to sign the Redis stats cache payload |
-| `DB_NAME` | No (default: `feathr`) | MongoDB database name |
+| `DB_NAME` | No (default: `events`) | MongoDB database name |
 | `EVENTS_COLLECTION` | No (default: `events`) | MongoDB collection name |
 | `EVENTS_INDEX` | No (default: `events`) | Elasticsearch index name |
 | `MAX_BATCH_SIZE` | No (default: `500`) | Maximum events per POST request |
@@ -127,7 +127,9 @@ I usually write many unit tests and fewer integration tests, using unit tests fo
 
 ## Queue
 
-This app uses Celery with Redis as a message queue. The API enqueues via `process_events.delay`. The worker picks up the task and writes to MongoDB + Elasticsearch.                                                                            
+This app uses Celery with Redis as a message queue. The API enqueues via `process_events.delay`. The worker picks up the task and writes to MongoDB + Elasticsearch.
+
+The spec asked for an in-process simulated queue. Celery with Redis is a real distributed queue — a deliberate upgrade. It provides genuine at-least-once delivery, process isolation, and a clear SQS migration path (see below), at the cost of a Redis dependency that the caching layer already requires anyway.                                                                            
                                                                                                                                                        
 ### Guarantees                                                                                                                                  
                                                                                                                                                               
@@ -190,7 +192,7 @@ The `app/tasks/event_queue.py` is meant to provide a wrapper so that Celery coul
   The realtime TTL is 10 seconds. The rationale is:
 
   - The endpoint is described as "realtime" so staleness should be minimal
-  - The aggregation window is 5 minutes of data — at low-to-moderate write volume, 10s of staleness is imperceptible relative to that window
+  - The aggregation window is 1 hour of data — at low-to-moderate write volume, 10s of staleness is imperceptible relative to that window
   - It's a read-heavy endpoint (rate limited to 60/minute per client) that could be hit by dashboards polling on an interval — without caching, every poll hits MongoDB with an aggregation scan
 
   10 seconds is essentially arbitrary. The right value depends on how often your dashboard polls and how much MongoDB aggregation load you're willing to accept. It's exposed as a setting precisely because there's no universal answer.
@@ -255,7 +257,7 @@ Keys examined equals docs examined in every case — no wasted key scans, no in-
 Serves three query patterns that don't involve the string filter fields:
 
 - **Date-only queries** (`?date_from=...&date_to=...` with no other filters): produces `{"timestamp": {"$gte": ..., "$lte": ...}}` — the bare `timestamp` index handles this directly (`IXSCAN`, 10,000 keys examined for a full-range query on the test dataset).
-- **Realtime stats** (`GET /v1/events/stats/realtime`): the `$match` stage filters `{"timestamp": {"$gte": since}}`. Without this index, the aggregation scans the entire collection on every request. With it, only documents within the 5-minute window are examined (2 docs on a 10k collection in testing).
+- **Realtime stats** (`GET /v1/events/stats/realtime`): the `$match` stage filters `{"timestamp": {"$gte": since}}`. Without this index, the aggregation scans the entire collection on every request. With it, only documents within the 1-hour window are examined (2 docs on a 10k collection in testing).
 - **Historical stats** (`GET /v1/events/stats`): without a `?type=` filter the pipeline has no `$match`, so the full index is scanned. The pipeline is hinted to use `type_1_timestamp_-1` as a covered query — MongoDB reads only index entries and fetches zero documents (`docsExamined: 0`, `keysExamined: 10,000`, plan: `PROJECTION_COVERED`). With `?type=pageview`, a `$match` stage is prepended and the same hint narrows the scan to only the matching type prefix — fewer keys examined, same zero document fetches.
 
 ### What's not indexed

@@ -275,45 +275,6 @@ At-least-once processing (duplicates possible, handled via idempotency).
 
 ---
 
-## Operational Considerations
-
-### Idempotency
-
-* Required due to at-least-once delivery
-* Achieved via:
-
-  * MongoDB unique index on `event_id` — duplicate events are silently skipped
-  * Elasticsearch uses the MongoDB `_id` as its document ID, making re-indexing a no-op overwrite
-
----
-
-### Observability (Recommended)
-
-* Queue depth (Redis)
-* Task latency (enqueue → completion)
-* MongoDB write latency
-* Elasticsearch indexing lag
-* DLQ size
-
----
-
-### Backpressure
-
-* Currently implicit via Redis queue growth
-* No explicit rate limiting based on downstream capacity
-
----
-
-## Known Limitations
-
-* No automatic Elasticsearch backfill
-* Single queue couples persistence and indexing latency
-* DLQ is not externally accessible
-* Offset pagination does not scale for large datasets
-* Aggregations are computed on raw data (no rollups)
-
----
-
 ## What I'd do With More Time
 
 1. **Elasticsearch backfill job**
@@ -334,7 +295,7 @@ At-least-once processing (duplicates possible, handled via idempotency).
 
 5. **Add Authentication** 
 
-   * Every endpoint is publicly accessible. Any client with network access. This is the a significant gap if the service is internet-facing. Mitigation depends on deployment context (internal-only vs. public API), but at minimum an API key
+   * Every endpoint is publicly accessible. Any client with network access could access. This is the a significant gap if the service is internet-facing. Mitigation depends on deployment context (internal-only vs. public API), but at minimum an API key
      check in middleware would close most of the risk.
 
 6. **Elasticsearch Index Lifecycle Management (scale-dependent)**
@@ -345,6 +306,13 @@ At-least-once processing (duplicates possible, handled via idempotency).
    
     * Rate limiting on an application-level identity instead
 
+8. **Add Observability**
+
+   * Queue depth (Redis)
+   * Task latency (enqueue → completion)
+   * MongoDB write latency
+   * Elasticsearch indexing lag
+   * DLQ size
 
 
 
