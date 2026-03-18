@@ -36,6 +36,7 @@ Use `uv` exclusively — never `pip`.
 - Add a dependency: `uv add package`
 - Add a dev dependency: `uv add --dev package`
 - Upgrade a package: `uv add --dev package --upgrade-package package`
+- Forbidden: `uv pip install`, `@latest` syntax
 
 ## Architecture
 
@@ -52,6 +53,8 @@ Use `uv` exclusively — never `pip`.
 
 **Middleware stack** (outermost first): `RequestSizeLimitMiddleware` (pure ASGI, 5MB body limit) → `TraceIDMiddleware` (injects `X-Trace-ID`, populates `trace_id_var` for structured logging)
 
+**Line length**: 88 characters maximum (enforced by ruff).
+
 **Configuration** (`app/constants.py`): All config is via `pydantic_settings.BaseSettings`. Environment variables map directly to field names (e.g. `MONGODB_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`). Module-level constants are backward-compat aliases for `settings.*` — always add new config to the `Settings` class, not as bare `os.getenv()` calls.
 
 **Celery client injection** (`app/tasks/events.py`): `EventsTask` is a base task class with `mongo_client` and `es_client` as lazily-initialized properties. Clients are stored as instance attributes on the task singleton (one per worker process). Tests inject mocks by setting `process_events._mongo_client` and `process_events._es_client` directly.
@@ -64,7 +67,7 @@ Use `uv` exclusively — never `pip`.
 
 ## Testing
 
-Tests live in `tests/` with `app/` on `sys.path` (set in `pyproject.toml`). All tests use mocks — there are no integration tests against real services.
+Tests live in `tests/` with `app/` on `sys.path` (set in `pyproject.toml`). Unit tests use mocks. Integration tests (under `tests/integration/`) require real services and are run via `docker compose -f docker-compose.test.yml up`.
 
 Key fixtures in `conftest.py`:
 - `client` — `TestClient` with all external dependencies mocked

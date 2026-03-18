@@ -321,7 +321,7 @@ All endpoints are rate-limited per client IP. Exceeding a limit returns `429 Too
 
 ### Tools used
 
-Claude (Sonnet 4.6) via Claude Code. I used it throughout the entire build, not just for isolated questions. The first thing I did was create an AGENTS.md file based on one I had used previously. In general, I approach using AI like having another developer on my team, working with me. I favor an iterative approach to development regardless if AI is involved or not. I break a project like this into individual tasks. For example, the first step of this project which I gave to Claude was to create an API with POST /events and GET /events endpoints with FastAPI using a MongoDB database. From there, I made some changes to code structure and setup myself. After that I continued to iterate, adding new endpoints/databases and reviewing continuously.
+Claude (Sonnet 4.6) via Claude Code. I used it throughout the entire build, not just for isolated questions. The first thing I did was create an CLAUDE.md file based on one I had used previously. In general, I approach using AI like having another developer on my team, working with me. I favor an iterative approach to development regardless if AI is involved or not. I break a project like this into individual tasks. For example, the first step of this project which I gave to Claude was to create an API with POST /events and GET /events endpoints with FastAPI using a MongoDB database. From there, I made some changes to code structure and setup myself. After that I continued to iterate, adding new endpoints/databases and reviewing continuously.
 
 ### How it helped
 
