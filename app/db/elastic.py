@@ -42,7 +42,7 @@ _EVENTS_MAPPING: dict[str, Any] = {
             "type": {"type": "keyword", "normalizer": "lowercase_normalizer"},
             "timestamp": {"type": "date"},
             "user_id": {"type": "keyword", "normalizer": "lowercase_normalizer"},
-            "source_url": {"type": "keyword", "normalizer": "lowercase_normalizer"},
+            "source_url": {"type": "text"},
             "metadata": {"type": "object", "dynamic": True},
         },
     },

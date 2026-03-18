@@ -120,6 +120,7 @@ def test_post_without_client_id_does_not_deduplicate(
 ):
     """The API assigns a fresh UUID per POST, so two POSTs = two documents."""
     payload = make_payload(user_id="dedup-user")
+    payload.pop("event_id")  # let the API assign a unique event_id per POST
 
     eager_client.post("/v1/events/", json=[payload])
     eager_client.post("/v1/events/", json=[payload])

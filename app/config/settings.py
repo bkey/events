@@ -2,7 +2,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
-class Settings(BaseSettings):  # type: ignore[misc]
+class Settings(BaseSettings):
     # MongoDB
     mongodb_url: str
     db_name: str = "events"
