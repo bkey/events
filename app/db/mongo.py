@@ -61,6 +61,17 @@ async def ensure_indexes(client: AsyncMongoClient[dict[str, object]]) -> None:
         settings.events_collection,
     )
 
+    dlq_ttl_seconds = settings.dlq_ttl_days * 24 * 60 * 60
+    await db[settings.dlq_collection].create_index(
+        "failed_at", expireAfterSeconds=dlq_ttl_seconds
+    )
+    logger.info(
+        "DLQ TTL index ensured on %s.%s (expiry: %d days)",
+        settings.db_name,
+        settings.dlq_collection,
+        settings.dlq_ttl_days,
+    )
+
 
 async def connect_db() -> AsyncMongoClient[dict[str, object]]:
     """Connect to MongoDB and verify the connection with a ping."""

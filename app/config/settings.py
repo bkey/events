@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     db_name: str = "events"
     events_collection: str = "events"
     dlq_collection: str = "dead_letter_events"
+    dlq_ttl_days: int = 30
 
     # Elasticsearch
     elasticsearch_url: str

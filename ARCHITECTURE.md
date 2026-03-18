@@ -332,9 +332,21 @@ At-least-once processing (duplicates possible, handled via idempotency).
 
    * Reduce aggregation cost at high volume
 
-5. **Elasticsearch Index Lifecycle Management (scale-dependent)**
+5. **Add Authentication** 
 
+   * Every endpoint is publicly accessible. Any client with network access. This is the a significant gap if the service is internet-facing. Mitigation depends on deployment context (internal-only vs. public API), but at minimum an API key
+     check in middleware would close most of the risk.
+
+6. **Elasticsearch Index Lifecycle Management (scale-dependent)**
+   
    * Time-based index rollover and tiered storage
+   
+7. **Rate limiting is per-IP only**
+   
+    * Rate limiting on an application-level identity instead
+
+
+
 
 ---
 
